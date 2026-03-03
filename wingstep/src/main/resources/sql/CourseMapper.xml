@@ -1,0 +1,511 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!-- 코스 / 후기 관련 Mapper - namespace : CourseDao 인터페이스와 1:1 매핑 -->
+<mapper namespace="com.wingstep.service.course.CourseDao">
+
+	<!-- ========================================================= -->
+	<!-- ResultMap 정의 -->
+	<!-- ========================================================= -->
+
+	<!-- COURSE_PATH 도메인 매핑 -->
+	<resultMap id="coursePathResultMap"
+		type="com.wingstep.service.domain.course.CoursePath">
+		<!-- COURSE_ID : 코스 ID(FK) -->
+		<result property="courseId" column="COURSE_ID" />
+		<!-- LOCATION : 위치 (POINT → WKT 문자열로 매핑) -->
+		<result property="location" column="LOCATION_WKT" />
+		<!-- DATE_TIME : 측정 일시 -->
+		<result property="dateTime" column="DATE_TIME" />
+	</resultMap>
+
+	<!-- COURSE 도메인 매핑 -->
+	<resultMap id="courseResultMap"
+		type="com.wingstep.service.domain.course.Course">
+		<!-- PK -->
+		<id property="courseId" column="COURSE_ID" />
+
+		<!-- 기본 정보 -->
+		<result property="userId" column="USER_ID" />
+		<result property="courseName" column="COURSE_NAME" />
+		<result property="distance" column="DISTANCE" />
+		<result property="type" column="TYPE" />
+
+		<!-- boolean isPublic 필드 주의 - Lombok @Data 기준, 내부적으로 setPublic(...) 사용 
+			- MyBatis property 는 "public" 으로 매핑 -->
+		<result property="public" column="IS_PUBLIC" />
+		<result column="AVG_RATING" property="avgRating" />
+		
+		<!-- 추가: 출발지 주소(문자열) -->
+		<result property="startLocation" column="START_LOCATION" />
+
+		<!-- POINT → 문자열(WKT) 로 매핑 -->
+		<result property="startPoint" column="START_POINT_WKT" />
+		<result property="endPoint" column="END_POINT_WKT" />
+
+		<!-- ROUTE_LINE 도메인 필드가 있다면 사용 (없으면 제거해도 됨) -->
+		<result property="routeLine" column="ROUTE_LINE_WKT" />
+
+		<!-- 코스 경로 리스트 (COURSE_PATH) -->
+		<collection property="coursePathList"
+			ofType="com.wingstep.service.domain.course.CoursePath"
+			column="COURSE_ID" select="listCoursePath" />
+	</resultMap>
+
+	<!-- REVIEW_IMAGE 도메인 매핑 -->
+	<resultMap id="reviewImageResultMap"
+		type="com.wingstep.service.domain.course.ReviewImage">
+		<id property="reviewImageId" column="REVIEW_IMAGE_ID" />
+		<result property="reviewId" column="REVIEW_ID" />
+		<result property="image" column="IMAGE" />
+	</resultMap>
+
+	<!-- REVIEW 도메인 매핑 -->
+	<!-- Review + ReviewImage 매핑 -->
+	<resultMap id="reviewResultMap"
+	           type="com.wingstep.service.domain.course.Review">
+	
+	    <!-- Review 기본 정보 -->
+	    <id     property="reviewId"      column="REVIEW_ID"/>
+	    <result property="courseId"      column="COURSE_ID"/>
+	    <result property="userId"        column="USER_ID"/>
+	    <result property="nickname"      column="NICKNAME"/>
+	    <result property="reviewContent" column="REVIEW_CONTENT"/>
+	    <result property="reviewDate"    column="REVIEW_DATE"/>
+	    <result property="reviewRating"  column="REVIEW_RATING"/>
+	    <result property="avatarImg"     column="AVATAR_IMG"/>
+	    <result property="levelIcon"     column="LEVEL_ICON"/>
+	
+	    <!-- ReviewImage 리스트 -->
+	    <collection property="reviewImages"
+	                ofType="com.wingstep.service.domain.course.ReviewImage">
+	        <id     property="reviewImageId" column="REVIEW_IMAGE_ID"/>
+	        <result property="reviewId"      column="REVIEW_ID"/>
+	        <result property="image"         column="REVIEW_IMAGE"/>
+	    </collection>
+	</resultMap>
+
+
+	<!-- ========================================================= -->
+	<!-- 내부용 SELECT (collection 에서 사용하는 서브쿼리) -->
+	<!-- ========================================================= -->
+
+	<!-- 후기 이미지 리스트 조회 (REVIEW_IMAGE) -->
+	<select id="selectReviewImageListByReviewId"
+		resultMap="reviewImageResultMap">
+		SELECT
+		RI.REVIEW_IMAGE_ID,
+		RI.REVIEW_ID,
+		RI.IMAGE
+		FROM REVIEW_IMAGE RI
+		WHERE RI.REVIEW_ID = #{reviewId}
+		ORDER BY RI.REVIEW_IMAGE_ID ASC
+	</select>
+
+	<!-- ========================================================= -->
+	<!-- DAO 메서드 매핑 -->
+	<!-- ========================================================= -->
+
+	<!-- 코스 생성 - 기본 비공개(IS_PUBLIC = 0)로 생성 - START_POINT / END_POINT / ROUTE_LINE 
+		은 WKT 문자열을 받아서 ST_GeomFromText 로 POINT / LINESTRING 으로 저장한다고 가정 - ROUTE_LINE 
+		을 다른 방식으로 생성한다면 해당 부분 조정 필요 -->
+	<insert id="addCourse"
+		parameterType="com.wingstep.service.domain.course.Course"
+		useGeneratedKeys="true" keyProperty="courseId">
+		INSERT INTO COURSE
+		(
+		USER_ID,
+		COURSE_NAME,
+		DISTANCE,
+		TYPE,
+		IS_PUBLIC,
+		START_LOCATION,
+		START_POINT,
+		END_POINT,
+		ROUTE_LINE
+		)
+		VALUES
+		(
+		#{userId},
+		#{courseName},
+		#{distance},
+		#{type},
+		0,  <!-- 기본 비공개 -->
+		#{startLocation},
+		ST_GeomFromText(#{startPoint}, 4326),
+		ST_GeomFromText(#{endPoint}, 4326),
+		ST_GeomFromText(#{routeLine}, 4326)
+		)
+	</insert>
+
+	<!-- 코스 상세 조회 + 해당 코스의 후기 평균 평점 -->
+	<select id="getCourse" parameterType="int"
+	        resultMap="courseResultMap">
+	
+	    SELECT
+	        C.COURSE_ID,
+	        C.USER_ID,
+	        C.COURSE_NAME,
+	        C.DISTANCE,
+	        C.TYPE,
+	        C.IS_PUBLIC,
+	        C.START_LOCATION,
+	        ST_AsText(C.START_POINT) AS START_POINT_WKT,
+	        ST_AsText(C.END_POINT)   AS END_POINT_WKT,
+	        ST_AsText(C.ROUTE_LINE)  AS ROUTE_LINE_WKT,
+	        R.AVG_RATING            AS AVG_RATING   <!-- 후기 평균 평점 -->
+	
+	    FROM COURSE C
+	
+	    <!-- 코스별 후기 평균 평점 서브쿼리와 조인 -->
+	    LEFT JOIN (
+	        SELECT
+	            COURSE_ID,
+	            AVG(REVIEW_RATING) AS AVG_RATING
+	        FROM REVIEW
+	        /* 필요시 여기서 삭제된 후기(IS_DELETE 등) 제외 조건 추가 */
+	        GROUP BY COURSE_ID
+	    ) R ON R.COURSE_ID = C.COURSE_ID
+	
+	    WHERE C.COURSE_ID = #{courseId}
+	</select>
+
+
+	<!-- 코스 경로 리스트 조회 -->
+	<select id="listCoursePath" parameterType="int"
+		resultMap="coursePathResultMap">
+		SELECT
+		CP.COURSE_ID,
+		ST_AsText(CP.LOCATION) AS LOCATION_WKT,
+		CP.DATE_TIME
+		FROM COURSE_PATH CP
+		WHERE CP.COURSE_ID = #{courseId}
+		ORDER BY CP.DATE_TIME ASC
+	</select>
+
+	<!-- 코스 경로 좌표 일괄 등록 (COURSE_PATH) - A안 : courseId 를 파라미터로 받고, pathList 안의 
+		courseId 는 사용하지 않음 - LOCATION 은 'POINT(x y)' 형태의 WKT 문자열을 ST_GeomFromText 
+		로 변환하여 저장 -->
+	<insert id="addCoursePathList">
+		INSERT INTO COURSE_PATH (
+		COURSE_ID,
+		DATE_TIME,
+		LOCATION
+		)
+		VALUES
+		<foreach collection="pathList" item="path" separator=",">
+			(
+			#{courseId},
+			#{path.dateTime},
+			ST_GeomFromText(#{path.location}, 4326)
+			)
+		</foreach>
+	</insert>
+
+	<!-- 코스 사용 준비용 조회 (필요시 getCourse 와 쿼리 분리할 수 있음) -->
+	<select id="useCourse" parameterType="int"
+		resultMap="courseResultMap">
+		SELECT
+		C.COURSE_ID,
+		C.USER_ID,
+		C.COURSE_NAME,
+		C.DISTANCE,
+		C.TYPE,
+		C.IS_PUBLIC,
+		ST_AsText(C.START_POINT) AS START_POINT_WKT,
+		ST_AsText(C.END_POINT) AS END_POINT_WKT,
+		ST_AsText(C.ROUTE_LINE) AS ROUTE_LINE_WKT
+		FROM COURSE C
+		WHERE C.COURSE_ID = #{courseId}
+	</select>
+
+	<!-- 코스 삭제 : 자신의 비공개 코스만 삭제 가능 -->
+	<delete id="deleteCourse">
+		DELETE FROM COURSE
+		WHERE COURSE_ID = #{courseId}
+		AND USER_ID = #{userId}
+		AND IS_PUBLIC = 0
+	</delete>
+
+	<!-- 코스 리스트 조회 + 각 코스의 후기 평균 평점 포함 -->
+	<select id="listCourse" resultMap="courseResultMap">
+	
+	    SELECT
+	        C.COURSE_ID,
+	        C.USER_ID,
+	        C.COURSE_NAME,
+	        C.DISTANCE,
+	        C.TYPE,
+	        C.IS_PUBLIC,
+	        C.START_LOCATION,
+	        ST_AsText(C.START_POINT) AS START_POINT_WKT,
+	        ST_AsText(C.END_POINT)   AS END_POINT_WKT,
+	        ST_AsText(C.ROUTE_LINE)  AS ROUTE_LINE_WKT,
+	        R.AVG_RATING            AS AVG_RATING   <!-- 후기 평균 평점 -->
+	
+	    FROM COURSE C
+	
+	    <!-- 코스별 후기 평균 평점 서브쿼리와 조인 -->
+	    LEFT JOIN (
+	        SELECT
+	            COURSE_ID,
+	            AVG(REVIEW_RATING) AS AVG_RATING
+	        FROM REVIEW
+	        /* 필요시 여기서 삭제된 후기(IS_DELETE 등) 제외 조건 추가 */
+	        GROUP BY COURSE_ID
+	    ) R ON R.COURSE_ID = C.COURSE_ID
+	
+	    <where>
+	        <!-- 기본 : 내 코스만 조회 옵션이 꺼져있으면 공개 코스만 조회 -->
+	        <if test="search.onlyMyCourse == null or !search.onlyMyCourse">
+	            AND C.IS_PUBLIC = 1
+	        </if>
+	
+	        <!-- 내 코스만 조회 옵션 -->
+	        <if test="search.onlyMyCourse != null and search.onlyMyCourse">
+	            AND C.USER_ID = #{userId}
+	        </if>
+	
+	        <!-- 코스명 키워드 검색 -->
+	        <if test="search.keyword != null and search.keyword != ''">
+	            AND C.COURSE_NAME LIKE CONCAT('%', #{search.keyword}, '%')
+	        </if>
+	
+	        <!-- 최소 거리 -->
+	        <if test="search.minDistance != null">
+	            AND C.DISTANCE &gt;= #{search.minDistance}
+	        </if>
+	
+	        <!-- 최대 거리 -->
+	        <if test="search.maxDistance != null">
+	            AND C.DISTANCE &lt;= #{search.maxDistance}
+	        </if>
+	
+	        <!-- // 필요하면 여기서 // 공개 코스 + 내가 만든 코스 // 조건을 추가할 수 있음 -->
+	    </where>
+	
+	    <!-- 항상 거리순 정렬 (currentLocationWkt 가 있을 때) -->
+	    <choose>
+	        <when test="currentLocationWkt != null and currentLocationWkt != ''">
+	            ORDER BY
+	            ST_Distance_Sphere(
+	                C.START_POINT,
+	                ST_GeomFromText(#{currentLocationWkt}, 4326)
+	            ) ASC
+	        </when>
+	        <otherwise>
+	            <!-- 현재 위치가 없을 때만 예외적으로 ID 내림차순 정렬 -->
+	            ORDER BY C.COURSE_ID DESC
+	        </otherwise>
+	    </choose>
+	</select>
+	
+	<select id="getTopRatedCourses" parameterType="int" resultMap="courseResultMap">
+        SELECT
+            C.COURSE_ID,
+            C.USER_ID,
+            C.COURSE_NAME,
+            C.DISTANCE,
+            C.TYPE,
+            C.IS_PUBLIC,
+            C.START_LOCATION,
+            ST_AsText(C.START_POINT) AS START_POINT_WKT,
+            ST_AsText(C.END_POINT)   AS END_POINT_WKT,
+            ST_AsText(C.ROUTE_LINE)  AS ROUTE_LINE_WKT,
+            IFNULL(R.AVG_RATING, 0)  AS AVG_RATING   FROM COURSE C
+        
+        LEFT JOIN (
+            SELECT
+                COURSE_ID,
+                AVG(REVIEW_RATING) AS AVG_RATING
+            FROM REVIEW
+            GROUP BY COURSE_ID
+        ) R ON R.COURSE_ID = C.COURSE_ID
+        
+        WHERE C.IS_PUBLIC = 1  ORDER BY AVG_RATING DESC, C.COURSE_ID DESC
+        
+        LIMIT #{limit}
+    </select>
+
+	<!-- 코스 공개 전환 : 자신의 비공개 코스만 공개로 변경 -->
+	<update id="publicCourse">
+		UPDATE COURSE
+		SET IS_PUBLIC = 1
+		WHERE COURSE_ID = #{courseId}
+		AND USER_ID = #{userId}
+		AND IS_PUBLIC = 0
+	</update>
+
+	<!-- 현재 위치가 코스 경로로부터 100m 이내인지 여부 체크 - ST_Distance_Sphere(ROUTE_LINE, POINT) 
+		&lt;= 100 - boolean 으로 매핑 (1 → true, 0 → false) -->
+	<select id="isOnCourseRoute" resultType="boolean">
+		SELECT
+		CASE
+		WHEN ST_Distance(
+		C.ROUTE_LINE,
+		ST_GeomFromText(#{currentLocationWkt}, 4326)
+		) &lt;= #{radius}
+		THEN 1
+		ELSE 0
+		END
+		FROM COURSE C
+		WHERE C.COURSE_ID = #{courseId}
+	</select>
+
+	<select id="isArrivedAtEndPoint" resultType="boolean">
+		SELECT
+		CASE
+		WHEN ST_Distance_Sphere(
+		C.END_POINT,
+		ST_GeomFromText(#{currentLocationWkt}, 4326, 'axis-order=long-lat')
+		) &lt;= #{radius} THEN 1
+		ELSE 0
+		END
+		FROM COURSE C
+		WHERE C.COURSE_ID = #{courseId}
+	</select>
+
+	<!-- ========================================================= -->
+	<!-- 후기 관련 -->
+	<!-- ========================================================= -->
+
+	<!-- 코스 후기 리스트 : REVIEW_VIEW + REVIEW_IMAGE 조인 -->
+	<select id="listReview" parameterType="int"
+		resultMap="reviewResultMap">
+
+		SELECT
+			V.REVIEW_ID,
+			V.COURSE_ID,
+			V.USER_ID,
+			V.NICKNAME,
+			V.REVIEW_CONTENT,
+			V.REVIEW_DATE,
+			V.REVIEW_RATING,
+			V.AVATAR_IMG,
+			V.LEVEL_ICON,
+			RI.REVIEW_IMAGE_ID,
+			RI.IMAGE AS REVIEW_IMAGE
+		FROM REVIEW_VIEW V
+			LEFT JOIN REVIEW_IMAGE RI
+			ON V.REVIEW_ID = RI.REVIEW_ID
+		WHERE V.COURSE_ID = #{courseId}
+			ORDER BY
+			V.REVIEW_DATE DESC,
+			V.REVIEW_ID DESC,
+			RI.REVIEW_IMAGE_ID ASC
+	</select>
+
+
+	<!-- 후기 생성 -->
+	<insert id="addReview"
+		parameterType="com.wingstep.service.domain.course.Review"
+		useGeneratedKeys="true" keyProperty="reviewId">
+		INSERT INTO REVIEW
+		(
+		COURSE_ID,
+		USER_ID,
+		WORKRECORD_ID,
+		REVIEW_CONTENT,
+		REVIEW_DATE,
+		REVIEW_RATING
+		)
+		VALUES
+		(
+		#{courseId},
+		#{userId},
+		#{workRecordId},
+		#{reviewContent},
+		#{reviewDate},
+		#{reviewRating}
+		)
+	</insert>
+
+	<!-- 후기 삭제 : 본인 후기만 삭제 -->
+	<delete id="deleteReview">
+		DELETE FROM REVIEW
+		WHERE REVIEW_ID = #{reviewId}
+		AND USER_ID = #{userId}
+	</delete>
+
+	<!-- 후기 수정 : 본인 후기만 수정 (7일 제한은 Service 에서 체크) -->
+	<update id="updateReview"
+	        parameterType="com.wingstep.service.domain.course.Review">
+	    UPDATE REVIEW
+	    SET REVIEW_CONTENT = #{reviewContent},
+	        REVIEW_RATING  = #{reviewRating}
+	    WHERE REVIEW_ID   = #{reviewId}
+	      AND USER_ID     = #{userId}
+	      AND COURSE_ID   = #{courseId}
+	</update>
+	
+	    <!-- 후기 이미지 등록 -->
+    <insert id="addReviewImage"
+            parameterType="com.wingstep.service.domain.course.ReviewImage"
+            useGeneratedKeys="true"
+            keyProperty="reviewImageId">
+        INSERT INTO REVIEW_IMAGE (
+            REVIEW_ID,
+            IMAGE
+        )
+        VALUES (
+            #{reviewId},
+            #{image}
+        )
+    </insert>
+    
+    <!-- 코스별 후기 개수 -->
+	<select id="countReviewByCourseId" parameterType="int" resultType="int">
+	    SELECT COUNT(1)
+	    FROM REVIEW
+	    WHERE COURSE_ID = #{courseId}
+	</select>
+	
+	<!-- 대표 후기 ID: 별점 내림차순, 최신순(동점이면 ID 내림차순) -->
+	<select id="getRepresentativeReviewIdByCourseId" parameterType="int" resultType="java.lang.Integer">
+	    SELECT REVIEW_ID
+	    FROM REVIEW
+	    WHERE COURSE_ID = #{courseId}
+	    ORDER BY REVIEW_RATING DESC, REVIEW_DATE DESC, REVIEW_ID DESC
+	    LIMIT 1
+	</select>
+	
+	<!-- 후기 1개 상세(이미지 포함) -->
+	<select id="getReviewByReviewId" parameterType="int" resultMap="reviewResultMap">
+	    SELECT
+	        V.REVIEW_ID,
+	        V.COURSE_ID,
+	        V.USER_ID,
+	        V.NICKNAME,
+	        V.REVIEW_CONTENT,
+	        V.REVIEW_DATE,
+	        V.REVIEW_RATING,
+	        V.AVATAR_IMG,
+	        V.LEVEL_ICON,
+	        RI.REVIEW_IMAGE_ID,
+	        RI.IMAGE AS REVIEW_IMAGE
+	    FROM REVIEW_VIEW V
+	    LEFT JOIN REVIEW_IMAGE RI
+	        ON V.REVIEW_ID = RI.REVIEW_ID
+	    WHERE V.REVIEW_ID = #{reviewId}
+	    ORDER BY RI.REVIEW_IMAGE_ID ASC
+	</select>
+    
+
+    <!-- 특정 후기의 이미지 전체 삭제 (후기 수정 시 사용) -->
+    <delete id="deleteReviewImagesByReviewId"
+            parameterType="int">
+        DELETE FROM REVIEW_IMAGE
+        WHERE REVIEW_ID = #{reviewId}
+    </delete>
+	
+
+	<select id="countReviewByWorkRecordId" parameterType="int"
+		resultType="int">
+		SELECT COUNT(1)
+		FROM REVIEW
+		WHERE WORKRECORD_ID = #{workRecordId}
+	</select>
+
+</mapper>

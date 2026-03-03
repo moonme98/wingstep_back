@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.wingstep.service.battle.JoinBattleDao">
+
+    <!-- JOIN_BATTLE ↔ JoinBattle 매핑 -->
+    <resultMap id="JoinBattleResultMap" type="com.wingstep.service.domain.battle.JoinBattle">
+        <id     property="battleId" column="BATTLE_ID"/>
+        <id     property="userId"   column="USER_ID"/>
+        <result property="nickname"   column="NICKNAME"/>
+        <result property="winStatus" column="WIN_STATUS"/>
+        <result property="team"      column="TEAM"/>
+        <result property="finishTime" column="FINISH_TIME"/>
+        
+    </resultMap>
+
+    <!-- INSERT : addJoinBattle(JoinBattle joinBattle) -->
+    <insert id="addJoinBattle"
+            parameterType="com.wingstep.service.domain.battle.JoinBattle">
+        INSERT INTO JOIN_BATTLE (
+            BATTLE_ID,
+            USER_ID,
+            WIN_STATUS,
+            TEAM
+        ) VALUES (
+            #{battleId},
+            #{userId},
+            #{winStatus},
+            #{team}
+        )
+    </insert>
+
+    <!-- 단건 조회 -->
+    <select id="getJoinBattle"
+            parameterType="map"
+            resultMap="JoinBattleResultMap">
+        SELECT
+            BATTLE_ID,
+            USER_ID,
+            WIN_STATUS,
+            TEAM
+        FROM JOIN_BATTLE
+        WHERE BATTLE_ID = #{battleId}
+          AND USER_ID   = #{userId}
+    </select>
+
+    <!-- 특정 배틀 참가 목록 -->
+    <select id="getJoinBattleList"
+            parameterType="int"
+            resultMap="JoinBattleResultMap">
+        SELECT
+            BATTLE_ID,
+            USER_ID,
+            WIN_STATUS,
+            TEAM
+        FROM JOIN_BATTLE
+        WHERE BATTLE_ID = #{battleId}
+        ORDER BY USER_ID
+    </select>
+
+    <!-- 승패 업데이트 -->
+    <update id="updateWinStatus" parameterType="map">
+        UPDATE JOIN_BATTLE
+        SET WIN_STATUS = #{winStatus}
+        WHERE BATTLE_ID = #{battleId}
+          AND USER_ID   = #{userId}
+    </update>
+
+    <!-- 전체 삭제 : 대결 삭제 시 사용 -->
+    <delete id="deleteJoinBattleByBattleId" parameterType="int">
+        DELETE FROM JOIN_BATTLE
+        WHERE BATTLE_ID = #{battleId}
+    </delete>
+
+    <!-- 특정 팀 참여 인원 수 -->
+    <select id="getJoinBattleCountByTeam"
+            parameterType="map"
+            resultType="int">
+        SELECT COUNT(*)
+        FROM JOIN_BATTLE
+        WHERE BATTLE_ID = #{battleId}
+          AND TEAM      = #{team}
+    </select>
+    
+    
+    
+
+<select id="getBattleResultList"
+        parameterType="int"
+        resultMap="JoinBattleResultMap">
+    SELECT
+        JB.BATTLE_ID       AS BATTLE_ID,
+        JB.USER_ID         AS USER_ID,
+        JB.WIN_STATUS      AS WIN_STATUS,
+        JB.TEAM            AS TEAM,
+        U.NICKNAME         AS NICKNAME,
+        W.WORKRECORD_DATE  AS FINISH_TIME
+    FROM JOIN_BATTLE JB
+      JOIN USERS U
+        ON JB.USER_ID = U.USER_ID
+      LEFT JOIN WORKRECORD W
+        ON W.BATTLE_ID = JB.BATTLE_ID
+       AND W.USER_ID   = JB.USER_ID
+    WHERE JB.BATTLE_ID = #{battleId}
+    ORDER BY JB.WIN_STATUS, W.WORKRECORD_DATE, U.NICKNAME
+</select>
+</mapper>
